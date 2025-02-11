@@ -1,0 +1,10 @@
+you need to install face_recognition library
+either switch to 3.10(already installed) or 3.12(need to install)
+and then download all the libraries needed
+and also download dlib library, the one i have is for 3.12
+you need to see the github for 3.10 python dlib file
+
+or
+
+you can just use anaconda for running it
+can only be run on computer i have
