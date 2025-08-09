@@ -1,7 +1,7 @@
 from PIL import Image
 import customtkinter as ctk
 from New_Member import NewMember
-# from Mark_Attendance import MarkAttendance
+from Mark_Attendance import MarkAttendance
 from View_Data import ViewData
 from Edit_Data import EditData
 from Payment import Payment
@@ -11,7 +11,6 @@ import json
 from datetime import datetime, timedelta
 from Manage_Data import DatabaseManager
 import CTkMessagebox
-# pip install -r requirements.txt
 
 json_file_path = 'reminders.json'
 message = CTkMessagebox.CTkMessagebox
@@ -42,7 +41,7 @@ class Home(ctk.CTk):
         image_label.pack(pady=20)
         
         self.create_button("Add New Member", NewMember)
-        # self.create_button("Mark Attendance", MarkAttendance)
+        self.create_button("Mark Attendance", MarkAttendance)
         
         self.create_button("View Data", ViewData)
         self.create_button("Edit/Delete Data", EditData)

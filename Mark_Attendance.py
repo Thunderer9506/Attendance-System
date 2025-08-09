@@ -19,21 +19,20 @@ class MarkAttendance(ctk.CTkToplevel):
         self.title("Attendance System")
         self.geometry("1400x750")
         ctk.set_appearance_mode('dark')
-        
+
         self.db = Manage_Data.DatabaseManager("GYM.db")
-        
         self.attendanceData = self.db.get_all_members('Attendance')
         self.memberData = self.db.get_all_members('Members')
-        self.last_id = 1 if not self.memberData else int(self.memberData[-1][0]) + 1
-        
+
         self.is_recognizing = False
-        self.recognition_data = {
-            "known_faces_encodings": [],
-            "known_faces_names": []
-        }
+        self.recognition_data = {"encodings": [], "ids": []}
+        self.recognized_ids = set()  # For preventing duplicate attendance in one session
+        self.cap = None
 
         self.layout()
-        
+
+    # ------------------ UI Components ------------------
+
     def labelEntry_Component(self, parent, text, placeholder):
         frame = ctk.CTkFrame(parent, fg_color='transparent')
         ctk.CTkLabel(frame, text=text, font=LABEL_FONT).pack(anchor='w')
@@ -41,13 +40,13 @@ class MarkAttendance(ctk.CTkToplevel):
         entry.pack(fill='x', expand=True)
         frame.pack(fill='x', pady=5)
         return entry
-     
+
     def layout(self):
-        # Info Frame
+        # Left Panel - Info and Buttons
         infoFrame = ctk.CTkScrollableFrame(self, fg_color='transparent')
-        
+
         ctk.CTkLabel(infoFrame, text='Mark Attendance', font=("Poppins", 30, 'bold')).pack()
-        
+
         self.camera_label = ctk.CTkLabel(infoFrame, text='Camera Feed', font=BUTTON_FONT, width=300, height=300)
         self.camera_label.pack(padx=20, pady=20, anchor='n')
 
@@ -56,192 +55,176 @@ class MarkAttendance(ctk.CTkToplevel):
         self.dob_entry = self.labelEntry_Component(entryFrame, 'Date of Birth', '12-03-1985')
         self.phone_entry = self.labelEntry_Component(entryFrame, 'Phone No.', '9674528439')
         entryFrame.pack(padx=5, anchor='w', pady=20)
-        
-        # Start and Stop Recognition buttons
+
+        # Start / Stop Recognition Buttons
         button_frame = ctk.CTkFrame(infoFrame, fg_color='transparent')
-        
-        self.start_recognition_button = ctk.CTkButton(button_frame, text='Start\nRecognition', font=BUTTON_FONT,
-            fg_color="#fff", corner_radius=7, text_color='#000000', hover_color="#CAF4FF", command=self.start_recognition)
+        self.start_recognition_button = ctk.CTkButton(
+            button_frame, text='Start\nRecognition', font=BUTTON_FONT,
+            fg_color="#fff", corner_radius=7, text_color='#000000',
+            hover_color="#CAF4FF", command=self.start_recognition
+        )
         self.start_recognition_button.pack(side='left', padx=5)
-        
-        self.stop_recognition_button = ctk.CTkButton(button_frame, text='Stop\nRecognition', font=BUTTON_FONT,
-            fg_color="#fff", corner_radius=7, text_color='#000000', hover_color="#CAF4FF", command=self.stop_recognition)
+
+        self.stop_recognition_button = ctk.CTkButton(
+            button_frame, text='Stop\nRecognition', font=BUTTON_FONT,
+            fg_color="#fff", corner_radius=7, text_color='#000000',
+            hover_color="#CAF4FF", command=self.stop_recognition, state="disabled"
+        )
         self.stop_recognition_button.pack(side='left', padx=5)
-        
         button_frame.pack(padx=20, pady=10)
-        
-        # Take Photo button
-        ctk.CTkButton(infoFrame, text='Mark Attendance', font=BUTTON_FONT, width=220,
-            fg_color="#fff", corner_radius=7, text_color='#000000', hover_color="#CAF4FF", command=self.entry_attendance).pack(fill='x', padx=20, pady=10)
-        
+
+        # Manual Mark Button
+        ctk.CTkButton(
+            infoFrame, text='Mark Attendance', font=BUTTON_FONT, width=220,
+            fg_color="#fff", corner_radius=7, text_color='#000000',
+            hover_color="#CAF4FF", command=self.entry_attendance
+        ).pack(fill='x', padx=20, pady=10)
+
         infoFrame.place(relx=0, rely=0, relwidth=0.25, relheight=1)
-        
-        # Table Frame
+
+        # Right Panel - Attendance Table
         tableFrame = ctk.CTkFrame(self, fg_color='transparent')
-        
         self.table = ttk.Treeview(
-            tableFrame,
-            columns=("id", "member_id", 'full_name', "date","check_in_time"),
+            tableFrame, columns=("id", "member_id", 'full_name', "date", "check_in_time"),
             show='headings'
         )
-        self.table.heading('id', text='ID')
-        self.table.heading('member_id', text='Member Id')
-        self.table.heading('full_name', text='Full Name')
-        self.table.heading('date', text='Date')
-        self.table.heading('check_in_time', text='Check In Time')
-        
+        for col in ("id", "member_id", "full_name", "date", "check_in_time"):
+            self.table.heading(col, text=col.replace("_", " ").title())
         self.table.pack(fill='both', expand=True)
-        
-        for i in range(len(self.attendanceData)):
-            self.table.insert(parent='', index=i, values=self.attendanceData[i])
-        
+
+        for i, row in enumerate(self.attendanceData):
+            self.table.insert('', i, values=row)
+
         table_scrollbar_y = ttk.Scrollbar(tableFrame, orient='vertical', command=self.table.yview)
         self.table.configure(yscrollcommand=table_scrollbar_y.set)
         table_scrollbar_y.place(relx=1, rely=0, relheight=1, anchor='ne')
-        
+
         tableFrame.place(relx=0.25, rely=0, relwidth=0.75, relheight=1)
-    
+
+    # ------------------ Attendance Logic ------------------
+
     def update_table(self):
         self.attendanceData = self.db.get_all_members('Attendance')
-        for item in self.table.get_children():
-                self.table.delete(item)
-        for i in range(len(self.attendanceData)):
-            self.table.insert(parent='', index=i, values=self.attendanceData[i])
-            
-    def entry_attendance(self,id=0):
-        today_dateTime = datetime.datetime.now()
-        formatted_time = today_dateTime.strftime('%I:%M:%S %p')
-        formatted_date = today_dateTime.strftime('%d-%m-%Y')
-        
+        self.table.delete(*self.table.get_children())
+        for i, row in enumerate(self.attendanceData):
+            self.table.insert('', i, values=row)
+
+    def entry_attendance(self, id=0):
+        today = datetime.datetime.now()
+        date_str = today.strftime('%d-%m-%Y')
+        time_str = today.strftime('%I:%M:%S %p')
+
         if id == 0:
+            # Manual Entry
             name = self.full_name_entry.get().strip().title()
             dob = self.dob_entry.get().strip()
             phone = self.phone_entry.get().strip()
-                    
             if not name or not dob or not phone:
-                message(title="Error", message="Please fill all fields", icon="cancel", option_1="OK",justify='center',fade_in_duration=1,sound=True)
+                message(title="Error", message="Please fill all fields", icon="cancel")
                 return
-            
-            if len(phone) > 10 or len(phone) < 10:
-                message(title="Error", message="Phone Number not filled correctly", icon="cancel", option_1="OK",justify='center',fade_in_duration=1,sound=True)
+            if len(phone) != 10:
+                message(title="Error", message="Phone Number must be 10 digits", icon="cancel")
                 return
 
-            data = self.db.get_members_id(name,dob,phone)
-            
+            data = self.db.get_members_id(name, dob, phone)
             if data:
-                try:
-                    self.db.insert_attendance(data[0], data[1], formatted_date, formatted_time)
-                    print(f"Attendance marked for {data[1]} at {formatted_time}")
-                    message(title="Success",message=f"Attendance marked of member \nName: {data[1]}\nTime: {formatted_time}",icon="check", option_1="OK",justify='center')
-                except Exception as e:
-                    print(f"Failed to mark attendance: {e}")
-                    message(title="Error", message=f"Failed to mark attendance: {e}", icon="cancel",justify='center',sound=True)
+                self.db.insert_attendance(data[0], data[1], date_str, time_str)
+                message(title="Success", message=f"Attendance marked for {data[1]} at {time_str}", icon="check")
+                self.update_table()
             else:
-                print(f"No data found for member {name}")
-                message(title="Error", message=f"No data found for \nMember: {data[1]}\nID: {data[0]}", icon="cancel",justify='center',fade_in_duration=1,sound=True)
+                message(title="Error", message="Member not found", icon="cancel")
         else:
-            data = self.db.get_Data_by_id("Members", int(id))[0]
-            
-            if data:
-                try:
-                    self.db.insert_attendance(data[0], data[1], formatted_date, formatted_time)
-                    print(f"Attendance marked for {data[1]} at {formatted_time}")
-                    message(title="Success",message=f"Attendance marked of member \nName: {data[1]}\nTime: {formatted_time}",icon="check", option_1="OK",justify='center')
-                except Exception as e:
-                    print(f"Failed to mark attendance: {e}")
-                    message(title="Error", message=f"Failed to mark attendance: {e}", icon="cancel",justify='center',sound=True)
-            else:
-                print(f"No data found for member {id}")
-                message(title="Error", message=f"No data found for \nMember: {data[1]}\nID: {data[0]}", icon="cancel",justify='center',fade_in_duration=1,sound=True)
-                
+            # Auto Entry from Recognition
+            try:
+                data = self.db.get_Data_by_id("Members", int(id))[0]
+                self.db.insert_attendance(data[0], data[1], date_str, time_str)
+                print(f"Attendance marked for ID {id} ({data[1]}) at {time_str}")
+                self.update_table()
+            except Exception as e:
+                print(f"[ERROR] Auto attendance failed for ID {id}: {e}")
+
+    # ------------------ Recognition ------------------
+
+    def load_known_faces(self):
+        folder = 'Members Photo'
+        encodings = []
+        ids = []
+
+        for file in os.listdir(folder):
+            if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                path = os.path.join(folder, file)
+                image = cv2.imread(path)
+                if image is None:
+                    print(f"[WARN] Could not read {path}")
+                    continue
+                rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                faces = face_recognition.face_encodings(rgb)
+                if len(faces) > 0:
+                    encodings.append(faces[0])
+                    ids.append(os.path.splitext(file)[0])  # numeric ID from filename
+                else:
+                    print(f"[INFO] No face found in {file}, skipped.")
+
+        self.recognition_data["encodings"] = encodings
+        self.recognition_data["ids"] = ids
+        print(f"[INFO] Loaded {len(encodings)} known faces.")
+
     def start_recognition(self):
-        if not self.is_recognizing:
-            self.is_recognizing = True
-            self.load_known_faces()
-            self.recognize_faces()
-            self.start_recognition_button.configure(text="Recognizing...", state="disabled")
-            self.stop_recognition_button.configure(state="normal")
-    
+        if self.is_recognizing:
+            return
+        self.load_known_faces()
+        if not self.recognition_data["encodings"]:
+            message(title="Error", message="No known faces loaded", icon="cancel")
+            return
+
+        self.cap = cv2.VideoCapture(0)
+        if not self.cap.isOpened():
+            message(title="Error", message="Could not access the camera.", icon="cancel")
+            return
+
+        self.is_recognizing = True
+        self.recognized_ids.clear()
+        self.start_recognition_button.configure(text="Recognizing...", state="disabled")
+        self.stop_recognition_button.configure(state="normal")
+        self.process_frame()
+
     def stop_recognition(self):
         self.is_recognizing = False
+        if self.cap and self.cap.isOpened():
+            self.cap.release()
         self.start_recognition_button.configure(text="Start\nRecognition", state="normal")
-        message(title="Info", message="Recognition Stopped",justify='center',fade_in_duration=1,sound=True)
-    
-    def load_known_faces(self):
-        known_faces_encodings = []
-        known_faces_names = []
+        self.stop_recognition_button.configure(state="disabled")
+        message(title="Info", message="Recognition stopped", icon="info")
 
-        members_photo_folder = 'Members Photo'
-        for filename in os.listdir(members_photo_folder):
-            if filename.endswith('.jpg') or filename.endswith('.png'):
-                member_name = os.path.splitext(filename)[0]
-                member_image = cv2.imread(os.path.join(members_photo_folder, filename))
-                member_face_encoding = self.get_face_encoding(member_image)
-                if member_face_encoding is not None:
-                    known_faces_encodings.append(member_face_encoding)
-                    known_faces_names.append(member_name)
-        
-        self.recognition_data["known_faces_encodings"] = known_faces_encodings
-        self.recognition_data["known_faces_names"] = known_faces_names
+    def process_frame(self):
+        if not self.is_recognizing:
+            return
 
-    def recognize_faces(self):
-        cap = cv2.VideoCapture(0)
-        recognized_ids = set()
+        ret, frame = self.cap.read()
+        if not ret:
+            self.stop_recognition()
+            return
 
-        def process_frame():
-            if not self.is_recognizing:
-                cap.release()
-                cv2.destroyAllWindows()
-                return
-            
-            ret, frame = cap.read()
-            if not ret:
-                cap.release()
-                cv2.destroyAllWindows()
-                return
-            
-            rgb_frame = np.ascontiguousarray(frame[:, :, ::-1])
-            face_locations = face_recognition.face_locations(rgb_frame)
-            face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-            
-            for face_encoding in face_encodings:
-                matches = face_recognition.compare_faces(self.recognition_data["known_faces_encodings"], face_encoding)
-                name = "Unknown"
+        small = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+        rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
-                if True in matches:
-                    first_match_index = matches.index(True)
-                    name = self.recognition_data["known_faces_names"][first_match_index]
-                    
-                for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-                    cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
-                    cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 0, 255), cv2.FILLED)
-                    cv2.putText(frame, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
-                    if name not in recognized_ids:
-                        if name == "Unknown":
-                            pass
-                        else:
-                            self.entry_attendance(id = name)
-                            recognized_ids.add(name)
-                            self.update_table()
-                    
-            resized_frame = cv2.resize(frame, (300,300))
-            rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(rgb_frame)
-            img_tk = ImageTk.PhotoImage(img)
-            self.camera_label.configure(image=img_tk)
-            self.camera_label.image = img_tk  # Keep a reference to prevent garbage collection
+        face_locations = face_recognition.face_locations(rgb_small)
+        face_encodings = face_recognition.face_encodings(rgb_small, face_locations)
 
-            self.update_idletasks()  # Ensure the GUI updates
-            
-            self.after(10, process_frame)  # Call process_frame again after 100ms
-        
-        process_frame()
+        for face_encoding in face_encodings:
+            matches = face_recognition.compare_faces(self.recognition_data["encodings"], face_encoding)
+            if True in matches:
+                idx = matches.index(True)
+                member_id = self.recognition_data["ids"][idx]
+                if member_id not in self.recognized_ids:
+                    self.recognized_ids.add(member_id)
+                    self.entry_attendance(id=member_id)
 
-    def get_face_encoding(self, image):
-        small_image = cv2.resize(image, (0, 0), fx=0.25, fy=0.25)
-        rgb_small_image = np.ascontiguousarray(small_image[:, :, ::-1])
-        face_locations = face_recognition.face_locations(rgb_small_image)
-        if len(face_locations) == 0:
-            return None
-        face_encodings = face_recognition.face_encodings(rgb_small_image, face_locations)[0]
-        return face_encodings
+        # Display frame in UI
+        display_frame = cv2.cvtColor(cv2.resize(frame, (300, 300)), cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(display_frame)
+        img_tk = ImageTk.PhotoImage(img)
+        self.camera_label.configure(image=img_tk)
+        self.camera_label.image = img_tk
+
+        self.after(10, self.process_frame)
