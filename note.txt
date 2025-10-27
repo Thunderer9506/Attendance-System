@@ -1,5 +1,0 @@
-i have fixed the previous problems
-but now we have to shift from sqlite to sheety that uses excel sheets to store data
-need to learn opencv and face recognition to build to fix mark attendance
-https://youtu.be/bK_k7eebGgc?si=fqI6gCixqYYfNdSO - playlist
-https://youtu.be/yQu_3e7MAr0?si=JOxxqBJzElSR8ksB - video
